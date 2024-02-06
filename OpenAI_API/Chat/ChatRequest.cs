@@ -1,9 +1,12 @@
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using OpenAI_API.Models;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Text;
-using OpenAI_API.ChatFunctions;
 
 namespace OpenAI_API.Chat
 {
@@ -17,7 +20,7 @@ namespace OpenAI_API.Chat
 		/// The model to use for this request
 		/// </summary>
 		[JsonProperty("model")]
-		public string Model { get; set; } = OpenAI_API.Models.Model.ChatGPTTurbo;
+		public string Model { get; set; } = OpenAI_API.Models.Model.DefaultChatModel;
 
 		/// <summary>
 		/// The messages to send with this Chat Request
@@ -44,7 +47,7 @@ namespace OpenAI_API.Chat
 		public int? NumChoicesPerMessage { get; set; }
 
 		/// <summary>
-		/// Specifies where the results should stream and be returned at one time.  Do not set this yourself, use the appropriate methods on <see cref="CompletionEndpoint"/> instead.
+		/// Specifies where the results should stream and be returned at one time.  Do not set this yourself, use the appropriate methods on <see cref="OpenAI_API.Completions.CompletionEndpoint"/> instead.
 		/// </summary>
 		[JsonProperty("stream")]
 		public bool Stream { get; internal set; } = false;
@@ -119,27 +122,39 @@ namespace OpenAI_API.Chat
 		/// </summary>
 		[JsonProperty("user")]
 		public string user { get; set; }
-        /// <summary>
-        /// A list of functions the model may generate JSON inputs for.
-        /// </summary>
-        [JsonProperty("functions")]
-		public List<Function> Functions { get; set; }
-        /// <summary>
-        /// Represents an optional field when sending a function prompt. 
-        /// This field determines which function to call.
-        /// </summary>
-        /// <remarks>
-        /// If this field is not specified, the default behavior ("auto") allows the model to automatically decide whether to call a function or not.
-        /// Specify the name of the function to call in the "Name" attribute of the FunctionCall object.
-        /// If you do not want the model to call any function, pass "None" for the "Name" attribute.
-        /// </remarks>
-        [JsonProperty("function_call")]
-        [JsonConverter(typeof(FunctionCallConverter))]
-        public FunctionCall FunctionCall { get; set; }
-        /// <summary>
-        /// Creates a new, empty <see cref="ChatRequest"/>
-        /// </summary>
-        public ChatRequest()
+
+		/// <summary>
+		/// An object specifying the format that the model must output. Setting to <see cref="ResponseFormats.JsonObject"/> enables JSON mode, which guarantees the message the model generates is valid JSON, assuming that the <see cref="ChatChoice.FinishReason"/> is not "length".
+		/// Important: when using JSON mode, you must also instruct the model to produce JSON yourself via a system or user message. Without this, the model may generate an unending stream of whitespace until the generation reaches the token limit, resulting in a long-running and seemingly "stuck" request.Also note that the message content may be partially cut off if `finish_reason= "length"`, which indicates the generation exceeded `max_tokens` or the conversation exceeded the max context length.
+		/// </summary>
+		[JsonIgnore]
+		public string ResponseFormat { get; set; } = "text";
+
+		/// <summary>
+		/// This is only used for serializing the request into JSON, do not use it directly.
+		/// </summary>
+		[JsonProperty("response_format", DefaultValueHandling=DefaultValueHandling.Ignore)]
+		internal Dictionary<string, string> ResponseFormatRaw
+		{
+			get
+			{
+				if (ResponseFormat == null || ResponseFormat == ResponseFormats.Text)
+					return null;
+				else
+					return new Dictionary<string, string>() { { "type", ResponseFormat } };
+			}
+		}
+
+		/// <summary>
+		/// If specified, OpenAI will make a best effort to sample deterministically, such that repeated requests with the same seed and parameters should return the same result. Determinism is not guaranteed, and you should refer to the <see cref="ChatResult.SystemFingerprint"/> response parameter to monitor changes in the backend.
+		/// </summary>
+		[JsonProperty("seed", DefaultValueHandling=DefaultValueHandling.Ignore)]
+		public int? Seed { get; set; }
+
+		/// <summary>
+		/// Creates a new, empty <see cref="ChatRequest"/>
+		/// </summary>
+		public ChatRequest()
 		{ }
 
 		/// <summary>
@@ -150,7 +165,6 @@ namespace OpenAI_API.Chat
 		{
 			if (basedOn == null)
 				return;
-
 			this.Model = basedOn.Model;
 			this.Messages = basedOn.Messages;
 			this.Temperature = basedOn.Temperature;
@@ -161,8 +175,21 @@ namespace OpenAI_API.Chat
 			this.FrequencyPenalty = basedOn.FrequencyPenalty;
 			this.PresencePenalty = basedOn.PresencePenalty;
 			this.LogitBias = basedOn.LogitBias;
-			this.Functions = basedOn.Functions;
-			this.FunctionCall = basedOn.FunctionCall;
+		}
+
+		/// <summary>
+		/// Options for the <see cref="ChatRequest.ResponseFormat"/> property
+		/// </summary>
+		public static class ResponseFormats
+		{
+			/// <summary>
+			/// The default response format, which is may be any type of text
+			/// </summary>
+			public const string Text = "text";
+			/// <summary>
+			/// The response format is guaranteed to be valid JSON, assuming that the <see cref="ChatChoice.FinishReason"/> is not "length"
+			/// </summary>
+			public const string JsonObject = "json_object";
 		}
 	}
 }
